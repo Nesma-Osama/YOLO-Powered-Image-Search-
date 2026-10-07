@@ -1,5 +1,5 @@
 model:
   yolo_model: "yolo11m.pt"
-  config_threshold: 0.3
+  config_threshold: 0.6
 data:
   image_extensions: [".jpg", ".jpeg", ".png"]

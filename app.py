@@ -2,7 +2,13 @@ import streamlit as st
 import sys
 from pathlib import Path
 from src.inference import InferenceYolo
-from src.utils import save_metadata, load_metadata, get_unique_classes_and_counts
+from src.utils import (
+    save_metadata,
+    load_metadata,
+    get_unique_classes_and_counts,
+    prepare_image_results,
+)
+import math
 
 sys.path.append(str(Path(__file__).parent))
 
@@ -11,6 +17,12 @@ def init_session_state():
     session_defaults = {
         "metadata": None,
         "unique_classes_and_counts": {},
+        "search_params": {
+            "search_mode": "Any of selected classes (OR)",
+            "selected_classes": [],
+            "thresholds": {},
+        },
+        "results": [],
     }
     for key, value in session_defaults.items():
         if key not in st.session_state:
@@ -22,11 +34,13 @@ init_session_state()
 st.set_page_config(page_title="YOLOV11 Search Application")
 
 st.title("Computer Vision Powered Search Application")
+
 process_type = st.radio(
     "Choose an option:",
     ["Process new Images", "Load existing metadata"],
     horizontal=True,
 )
+
 with st.expander(process_type, expanded=True):
 
     if process_type == "Process new Images":
@@ -37,7 +51,7 @@ with st.expander(process_type, expanded=True):
             )
 
         with col2:
-            model_path = st.text_input("Model weights path", "yolo11m.pt")
+            model_path = st.text_input("Model weights path", "yolo26n.pt")
 
         if st.button("Start Inference"):
 
@@ -89,3 +103,86 @@ with st.expander(process_type, expanded=True):
                     st.error(f"Error occurred while loading metadata: {str(e)}")
             else:
                 st.warning("Please provide the metadata file path.")
+
+if st.session_state.metadata:
+    st.subheader("Search Engine")
+    st.session_state.search_params["search_mode"] = st.radio(
+        "Search mode",
+        ["Any of selected classes (OR)", "All of selected classes (AND)"],
+        horizontal=True,
+    )
+    st.session_state.search_params["selected_classes"] = st.multiselect(
+        "Choose to search for", st.session_state.unique_classes_and_counts.keys()
+    )
+    if st.session_state.search_params["selected_classes"]:
+
+        st.subheader("Count Thresholds (optional)")
+        rows = math.ceil(len(st.session_state.search_params["selected_classes"]) / 4)
+        idx = 0
+        for row in range(rows):
+            cols = st.columns(4)
+            for col in cols:
+                with col:
+                    cls_threshold = st.selectbox(
+                        f" Max Count for {st.session_state.search_params['selected_classes'][idx]}",
+                        options=st.session_state.unique_classes_and_counts[
+                            st.session_state.search_params["selected_classes"][idx]
+                        ],
+                    )
+                    st.session_state.search_params["thresholds"][
+                        st.session_state.search_params["selected_classes"][idx]
+                    ] = cls_threshold
+                    idx += 1
+                if idx >= len(st.session_state.search_params["selected_classes"]):
+                    break
+        if (
+            st.button("Search Images")
+            and st.session_state.search_params["selected_classes"]
+        ):
+            results = []
+            for item in st.session_state.metadata:
+                if (
+                    st.session_state.search_params["search_mode"]
+                    == "Any of selected classes (OR)"
+                ):
+                    for cls in st.session_state.search_params["selected_classes"]:
+                        if (
+                            cls in item["class_counts"]
+                            and item["class_counts"][cls]
+                            <= st.session_state.search_params["thresholds"][cls]
+                        ):
+                            results.append(item)
+                            break
+                else:
+                    satisfy = True
+                    for cls in st.session_state.search_params["selected_classes"]:
+                        if not (
+                            cls in item["class_counts"]
+                            and item["class_counts"][cls]
+                            <= st.session_state.search_params["thresholds"][cls]
+                        ):
+                            satisfy = False
+                            break
+                    if satisfy:
+                        results.append(item)
+            st.session_state["results"] = results
+if st.session_state["results"]:
+    st.subheader(f"Search Results: {len(st.session_state["results"])} Images Found")
+    rows = math.ceil(len(st.session_state["results"]) / 2)
+    idx = 0
+    for row in range(rows):
+        cols = st.columns(2)
+        for col in cols:
+            with col:
+                if idx == len(st.session_state["results"]):
+                    break
+                st.image(
+                    prepare_image_results(
+                        st.session_state["results"][idx]["image_path"],
+                        st.session_state["results"][idx]["detections"],
+                    ),
+                    width=400,
+                    
+                )
+                st.write(Path(st.session_state["results"][idx]["image_path"]).name)
+                idx += 1
